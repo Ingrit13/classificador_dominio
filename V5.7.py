@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 # === 1. Carregar os dados de treinamento ===
-df = pd.read_csv("Dataset_Ajustado_com_Cabe_alho_Correto.csv")
+df = pd.read_csv("dataset.csv")
 
 # === 2. Função de pré-processamento ===
 def preprocess_text(text):
@@ -22,7 +22,7 @@ def preprocess_text(text):
     return text
 
 # === 3. Criar coluna de texto combinando os campos relevantes ===
-df['texto'] = df.apply(lambda row: f"{row['schema']}, {row['nome_tabela']}, {row['qtd_colunas']}, {row['dominio']}", axis=1)
+df['texto'] = df.apply(lambda row: f"{row['schema']}, {row['nome_tabela']}, {row['qtd_colunas']}", axis=1)
 
 # === 4. Aplicar pré-processamento ===
 df['texto'] = df['texto'].apply(preprocess_text)
@@ -30,6 +30,7 @@ df['texto'] = df['texto'].apply(preprocess_text)
 # === 5. Variáveis de entrada (X) e saída (y) ===
 X = df['texto']
 y = df['dominio']
+
 
 # === 6. Dividir treino e teste ===
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
