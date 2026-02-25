@@ -1,0 +1,32 @@
+# NumPy arrays (dados de treino/teste gerados)
+*.npy
+
+# Modelo treinado e artefatos do pipeline
+modelo_svm_treinado.pkl
+matriz_confusao.png
+resultados_api/
+previsoes_resultado.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+*.so
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Ambiente (nunca versionar token)
+.env
+.env.local
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
