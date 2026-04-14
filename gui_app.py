@@ -204,11 +204,20 @@ def main():
         try:
             bases = listar_bases_dados()
             om_state["bases"] = bases
-            labels = [f"{b.get('name')} | {b.get('fullyQualifiedName')}" for b in bases]
+            labels = []
+            for b in bases:
+                svc = b.get("service_pai") or "—"
+                labels.append(f"{b.get('name')} | {b.get('fullyQualifiedName')}  (serviço: {svc})")
             cb_base_fqn["values"] = labels
             if labels:
                 cb_base_fqn.current(0)
-            log_om.insert(tk.END, f"Carregadas {len(bases)} base(s).\n")
+                cb_base_fqn.set(labels[0])
+            log_om.insert(tk.END, f"Carregadas {len(bases)} base(s) (databases).\n")
+            if not bases:
+                log_om.insert(
+                    tk.END,
+                    "Nenhuma database encontrada. Verifique ingestão no OpenMetadata e permissões do token.\n",
+                )
         except Exception as e:
             log_om.insert(tk.END, f"Erro ao listar bases: {e}\n")
             messagebox.showerror("OpenMetadata", str(e))

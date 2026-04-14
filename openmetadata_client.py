@@ -28,28 +28,119 @@ def configurado() -> bool:
     return bool(OPENMETADATA_URL and OPENMETADATA_TOKEN)
 
 
-def listar_bases_dados(limit: int = 500) -> List[Dict[str, Any]]:
-    """
-    Lista bases de dados (entidade Database) disponíveis no catálogo.
-    Retorna lista de dicts com name, fullyQualifiedName, id.
-    """
+def _get_paginated(url: str, params_base: Dict[str, Any], page_limit: int = 500) -> List[Dict[str, Any]]:
+    """Acumula todas as páginas (cursor `after`) de um GET JSON com `data` e `paging`."""
+    items: List[Dict[str, Any]] = []
+    after: Optional[str] = None
+    while True:
+        params = {**params_base, "limit": min(page_limit, 1000)}
+        if after:
+            params["after"] = after
+        r = requests.get(url, headers=_auth_headers(), params=params, timeout=120)
+        if r.status_code != 200:
+            raise RuntimeError(f"Falha em {url} ({r.status_code}): {r.text[:400]}")
+        data = r.json()
+        items.extend(data.get("data") or [])
+        after = (data.get("paging") or {}).get("after")
+        if not after:
+            break
+    return items
+
+
+def listar_servicos_database(limit: int = 500) -> List[Dict[str, Any]]:
+    """Lista Database Services (conexões de banco) — GET /api/v1/services/databaseServices."""
+    if not OPENMETADATA_URL or not OPENMETADATA_TOKEN:
+        raise RuntimeError("OPENMETADATA_URL e OPENMETADATA_TOKEN devem estar definidos.")
+    url = f"{OPENMETADATA_URL}/api/v1/services/databaseServices"
+    raw = _get_paginated(url, {"limit": limit, "include": "all"}, page_limit=limit)
+    out = []
+    for s in raw:
+        fqn = s.get("fullyQualifiedName") or s.get("name")
+        if fqn:
+            out.append(
+                {
+                    "name": s.get("name"),
+                    "fullyQualifiedName": fqn,
+                    "id": s.get("id"),
+                    "serviceType": s.get("serviceType"),
+                }
+            )
+    return out
+
+
+def listar_databases_por_servico(service_fqn: str, limit: int = 500) -> List[Dict[str, Any]]:
+    """Lista entidades Database ligadas a um Database Service (parâmetro `service`)."""
     if not OPENMETADATA_URL or not OPENMETADATA_TOKEN:
         raise RuntimeError("OPENMETADATA_URL e OPENMETADATA_TOKEN devem estar definidos.")
     url = f"{OPENMETADATA_URL}/api/v1/databases"
-    r = requests.get(
+    raw = _get_paginated(
         url,
-        headers=_auth_headers(),
-        params={"limit": limit, "fields": "service"},
-        timeout=60,
+        {"service": service_fqn, "fields": "service", "include": "all", "limit": limit},
+        page_limit=limit,
     )
-    if r.status_code != 200:
-        raise RuntimeError(f"Falha ao listar databases ({r.status_code}): {r.text[:300]}")
-    data = r.json()
     out = []
-    for d in data.get("data", []):
+    for d in raw:
         fqn = d.get("fullyQualifiedName")
         if fqn:
             out.append({"name": d.get("name"), "fullyQualifiedName": fqn, "id": d.get("id")})
+    return out
+
+
+def listar_bases_dados(limit: int = 500) -> List[Dict[str, Any]]:
+    """
+    Lista bases de dados (Database) no catálogo.
+
+    Estratégia (OpenMetadata costuma indexar databases por serviço):
+    1) Lista cada Database Service em /api/v1/services/databaseServices
+    2) Para cada serviço, busca databases com GET /api/v1/databases?service=<fqn>
+    3) Se ainda vazio, tenta listagem global GET /api/v1/databases
+
+    Retorna lista de dicts com name, fullyQualifiedName, id e opcionalmente service_pai.
+    """
+    if not OPENMETADATA_URL or not OPENMETADATA_TOKEN:
+        raise RuntimeError("OPENMETADATA_URL e OPENMETADATA_TOKEN devem estar definidos.")
+
+    vistos: set = set()
+    out: List[Dict[str, Any]] = []
+
+    servicos = listar_servicos_database(limit=limit)
+
+    for svc in servicos:
+        svc_fqn = svc.get("fullyQualifiedName") or ""
+        if not svc_fqn:
+            continue
+        try:
+            dbs = listar_databases_por_servico(svc_fqn, limit=limit)
+        except RuntimeError:
+            dbs = []
+        for d in dbs:
+            fqn = d.get("fullyQualifiedName")
+            if not fqn or fqn in vistos:
+                continue
+            vistos.add(fqn)
+            out.append(
+                {
+                    "name": d.get("name"),
+                    "fullyQualifiedName": fqn,
+                    "id": d.get("id"),
+                    "service_pai": svc_fqn,
+                }
+            )
+
+    if not out:
+        url = f"{OPENMETADATA_URL}/api/v1/databases"
+        raw = _get_paginated(
+            url,
+            {"fields": "service", "include": "all", "limit": limit},
+            page_limit=limit,
+        )
+        for d in raw:
+            fqn = d.get("fullyQualifiedName")
+            if not fqn or fqn in vistos:
+                continue
+            vistos.add(fqn)
+            out.append({"name": d.get("name"), "fullyQualifiedName": fqn, "id": d.get("id")})
+
     return out
 
 
