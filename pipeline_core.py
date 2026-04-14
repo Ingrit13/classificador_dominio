@@ -97,6 +97,26 @@ def carregar_e_preparar_csv(
     return df
 
 
+def preparar_dataframe_previsao(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Valida e prepara um DataFrame em memória (mesmas colunas que o CSV de previsão).
+    Colunas: schema, nome_tabela, qtd_colunas, nome_colunas (opcional: table_fqn do OpenMetadata).
+    """
+    missing = [c for c in TEXT_COLS if c not in df.columns]
+    if missing:
+        raise ValueError(f"Colunas obrigatórias ausentes: {missing}")
+    df = df.copy()
+    for c in TEXT_COLS:
+        if c == "qtd_colunas":
+            df[c] = df[c].astype("Int64").astype("string").fillna("0")
+        else:
+            df[c] = df[c].astype("string").fillna("")
+    df["texto"] = df.apply(_preparar_texto, axis=1).astype("string").fillna("")
+    df["texto"] = df["texto"].apply(_preprocess_text)
+    df = df[df["texto"].str.strip() != ""]
+    return df
+
+
 def treinar_com_csv(
     csv_path: str,
     salvar_modelo_em: Optional[str] = None,
@@ -176,6 +196,39 @@ def treinar_com_csv(
     }
 
 
+def _prever_com_coluna_texto(df: pd.DataFrame, pipeline) -> pd.DataFrame:
+    """df deve já conter coluna 'texto'. Adiciona predicted_domain, confidence e table_fqn se faltar."""
+    if df.empty:
+        raise ValueError("Nenhuma linha válida após pré-processamento.")
+    pred = pipeline.predict(df["texto"].to_numpy())
+    proba = pipeline.predict_proba(df["texto"].to_numpy())
+    conf = np.max(proba, axis=1)
+    df = df.copy()
+    df["predicted_domain"] = pred
+    df["confidence"] = conf.astype(float)
+    if "table_fqn" not in df.columns and "schema" in df.columns and "nome_tabela" in df.columns:
+        df["table_fqn"] = df["schema"].astype(str) + "." + df["nome_tabela"].astype(str)
+    return df
+
+
+def prever_dataframe(
+    df: pd.DataFrame,
+    modelo_path: Optional[str] = None,
+    salvar_resultado_em: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Aplica o modelo treinado a um DataFrame com schema, nome_tabela, qtd_colunas, nome_colunas.
+    Preserva coluna table_fqn se existir (ex.: FQN real do OpenMetadata).
+    """
+    modelo_path = modelo_path or MODELO_PADRAO
+    pipeline = joblib.load(modelo_path)
+    df = preparar_dataframe_previsao(df)
+    df = _prever_com_coluna_texto(df, pipeline)
+    if salvar_resultado_em:
+        df.to_csv(salvar_resultado_em, index=False)
+    return df
+
+
 def prever_csv(
     csv_path: str,
     modelo_path: Optional[str] = None,
@@ -188,19 +241,7 @@ def prever_csv(
     modelo_path = modelo_path or MODELO_PADRAO
     pipeline = joblib.load(modelo_path)
     df = carregar_e_preparar_csv(csv_path, exige_rotulo=False)
-    if df.empty:
-        raise ValueError("Nenhuma linha válida após pré-processamento.")
-
-    pred = pipeline.predict(df["texto"].to_numpy())
-    proba = pipeline.predict_proba(df["texto"].to_numpy())
-    conf = np.max(proba, axis=1)
-
-    df = df.copy()
-    df["predicted_domain"] = pred
-    df["confidence"] = conf.astype(float)
-    if "schema" in df.columns and "nome_tabela" in df.columns:
-        df["table_fqn"] = df["schema"].astype(str) + "." + df["nome_tabela"].astype(str)
-
+    df = _prever_com_coluna_texto(df, pipeline)
     if salvar_resultado_em:
         df.to_csv(salvar_resultado_em, index=False)
     return df

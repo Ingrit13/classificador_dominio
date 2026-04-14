@@ -9,6 +9,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+import pandas as pd
 import requests
 
 # Sem valor padrão para o token (segurança). URL pode ficar vazia para desabilitar.
@@ -30,6 +31,85 @@ def _auth_headers() -> Dict[str, str]:
 def configurado() -> bool:
     """Retorna True se URL e token estiverem definidos."""
     return bool(OPENMETADATA_URL and OPENMETADATA_TOKEN)
+
+
+def listar_bases_dados(limit: int = 500) -> List[Dict[str, Any]]:
+    """
+    Lista bases de dados (entidade Database) disponíveis no catálogo.
+    Retorna lista de dicts com name, fullyQualifiedName, id.
+    """
+    if not OPENMETADATA_URL or not OPENMETADATA_TOKEN:
+        raise RuntimeError("OPENMETADATA_URL e OPENMETADATA_TOKEN devem estar definidos.")
+    url = f"{OPENMETADATA_URL}/api/v1/databases"
+    r = requests.get(
+        url,
+        headers=_auth_headers(),
+        params={"limit": limit, "fields": "service"},
+        timeout=60,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"Falha ao listar databases ({r.status_code}): {r.text[:300]}")
+    data = r.json()
+    out = []
+    for d in data.get("data", []):
+        fqn = d.get("fullyQualifiedName")
+        if fqn:
+            out.append({"name": d.get("name"), "fullyQualifiedName": fqn, "id": d.get("id")})
+    return out
+
+
+def listar_tabelas_por_database(database_fqn: str, limit: int = 1000) -> List[Dict[str, Any]]:
+    """
+    Lista tabelas cujo parent database corresponde ao FQN informado.
+    database_fqn: fullyQualifiedName da base (ex.: postgres.production).
+    """
+    if not OPENMETADATA_URL or not OPENMETADATA_TOKEN:
+        raise RuntimeError("OPENMETADATA_URL e OPENMETADATA_TOKEN devem estar definidos.")
+    url = f"{OPENMETADATA_URL}/api/v1/tables"
+    r = requests.get(
+        url,
+        headers=_auth_headers(),
+        params={
+            "database": database_fqn,
+            "limit": limit,
+            "fields": "columns,databaseSchema,database",
+        },
+        timeout=120,
+    )
+    if r.status_code != 200:
+        raise RuntimeError(f"Falha ao listar tabelas ({r.status_code}): {r.text[:400]}")
+    return r.json().get("data", [])
+
+
+def tabelas_openmetadata_para_dataframe(tabelas: List[Dict[str, Any]]) -> pd.DataFrame:
+    """
+    Converte a lista de tabelas retornada pela API em DataFrame para o modelo
+    (schema, nome_tabela, qtd_colunas, nome_colunas, table_fqn).
+    """
+    linhas = []
+    for t in tabelas:
+        fqn = t.get("fullyQualifiedName") or ""
+        nome = t.get("name") or ""
+        cols = t.get("columns") or []
+        nomes_col = [c.get("name", "") for c in cols if isinstance(c, dict) and c.get("name")]
+        qtd = len(nomes_col)
+        nome_colunas_str = str(set(nomes_col)) if nomes_col else "{}"
+        ds = t.get("databaseSchema")
+        if isinstance(ds, dict) and ds.get("name"):
+            schema_txt = str(ds.get("name"))
+        else:
+            partes = fqn.split(".")
+            schema_txt = partes[-2] if len(partes) >= 2 else ""
+        linhas.append(
+            {
+                "schema": schema_txt,
+                "nome_tabela": nome,
+                "qtd_colunas": qtd,
+                "nome_colunas": nome_colunas_str,
+                "table_fqn": fqn,
+            }
+        )
+    return pd.DataFrame(linhas)
 
 
 def listar_dominios(limit: int = 1000) -> List[Dict[str, Any]]:
