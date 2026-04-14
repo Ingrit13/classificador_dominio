@@ -191,8 +191,13 @@ def main():
     ttk.Label(frame_om, text=f"Status: {om_status}", font=("", 9)).pack(anchor=tk.W)
     ttk.Label(
         frame_om,
-        text="Fluxo: carregue as bases do catálogo, selecione uma base, busque as tabelas e gere previsões; depois aplique os domínios.",
-        wraplength=600,
+        text=(
+            "Fluxo: 1) Carregar lista do catálogo (databases) no combobox abaixo; "
+            "2) escolher uma base; 3) Buscar tabelas e gerar previsões; "
+            "4) Aplicar domínios no OpenMetadata. "
+            "«Listar domínios» só mostra domínios no log — não preenche o combobox."
+        ),
+        wraplength=620,
     ).pack(anchor=tk.W, pady=(0, 6))
 
     om_state = {"bases": [], "df_pred": None}
@@ -204,8 +209,11 @@ def main():
     row_om1 = ttk.Frame(frame_om)
     row_om1.pack(fill=tk.X, pady=4)
     ttk.Label(row_om1, text="Base (database):").pack(side=tk.LEFT, padx=(0, 8))
-    cb_base_fqn = ttk.Combobox(row_om1, width=70, state="readonly")
-    cb_base_fqn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))
+    # Botão antes do Combobox: com expand no combo, empacotar o botão à direita o escondia fora da janela.
+    btn_om_carregar_bases = ttk.Button(row_om1, text="Carregar lista do catálogo")
+    btn_om_carregar_bases.pack(side=tk.LEFT, padx=(0, 8))
+    cb_base_fqn = ttk.Combobox(row_om1, width=48, state="readonly")
+    cb_base_fqn.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     def om_carregar_bases():
         log_om.delete("1.0", tk.END)
@@ -235,7 +243,7 @@ def main():
             log_om.insert(tk.END, f"Erro ao listar bases: {e}\n")
             messagebox.showerror("OpenMetadata", str(e))
 
-    ttk.Button(row_om1, text="Carregar bases", command=om_carregar_bases).pack(side=tk.RIGHT)
+    btn_om_carregar_bases.config(command=om_carregar_bases)
 
     row_om2 = ttk.Frame(frame_om)
     row_om2.pack(fill=tk.X, pady=4)
@@ -265,7 +273,10 @@ def main():
                 return
             fqn_db = _om_fqn_base_selecionada()
             if not fqn_db:
-                messagebox.showwarning("Aviso", "Carregue as bases e selecione uma na lista.")
+                messagebox.showwarning(
+                    "Aviso",
+                    "Use «Carregar lista do catálogo» acima e selecione uma base no combobox.",
+                )
                 return
             if not Path(MODELO_PADRAO).exists():
                 messagebox.showwarning("Aviso", "Treine o modelo na aba Treino antes.")
