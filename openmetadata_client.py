@@ -8,6 +8,7 @@ import json
 import os
 import time
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import pandas as pd
 import requests
@@ -392,27 +393,49 @@ def listar_dominios(limit: int = 1000) -> List[Dict[str, Any]]:
 
 
 def get_table_by_fqn(table_fqn: str) -> Dict[str, Any]:
-    """Busca tabela pelo FQN (fullyQualifiedName). Levanta RuntimeError em falha."""
+    """
+    Busca tabela pelo FQN (fullyQualifiedName). Levanta RuntimeError em falha.
+
+    Em versões recentes do OpenMetadata o campo na entidade Table é ``domains`` (lista);
+    ``fields=domain`` na query passou a ser inválido (400 Invalid field name domain).
+    """
     if not _om_url() or not _om_token():
         raise RuntimeError("OPENMETADATA_URL e OPENMETADATA_TOKEN devem estar definidos nas variáveis de ambiente.")
-    url = f"{_om_url()}/api/v1/tables/name/{table_fqn}?fields=domain"
-    r = requests.get(url, headers=_auth_headers(), timeout=30)
-    if r.status_code == 200:
-        return r.json()
-    raise RuntimeError(f"Falha ao buscar tabela '{table_fqn}' ({r.status_code}): {r.text[:200]}")
+    enc = quote(table_fqn, safe="")
+    base = f"{_om_url()}/api/v1/tables/name/{enc}"
+    last_err: Optional[str] = None
+    for suffix in ("?fields=domains", ""):
+        url = base + suffix
+        r = requests.get(url, headers=_auth_headers(), timeout=30)
+        if r.status_code == 200:
+            return r.json()
+        last_err = f"({r.status_code}): {r.text[:400]}"
+        if r.status_code == 400 and suffix and "Invalid field name" in (r.text or ""):
+            continue
+        break
+    raise RuntimeError(f"Falha ao buscar tabela '{table_fqn}' {last_err or ''}")
 
 
 def patch_table_domain(table_id: str, domain_id: str) -> Dict[str, Any]:
-    """Atribui domínio à tabela via PATCH. Levanta RuntimeError em falha."""
+    """
+    Atribui domínio à tabela via JSON merge PATCH.
+    Tenta ``domains`` (lista, OM recente) e depois ``domain`` (referência única, OM mais antigo).
+    """
     if not _om_url() or not _om_token():
         raise RuntimeError("OPENMETADATA_URL e OPENMETADATA_TOKEN devem estar definidos nas variáveis de ambiente.")
     url = f"{_om_url()}/api/v1/tables/{table_id}"
-    payload = {"domain": {"id": domain_id, "type": "domain"}}
+    ref = {"id": domain_id, "type": "domain"}
     headers = {**_auth_headers(), "Content-Type": "application/json"}
-    r = requests.patch(url, headers=headers, data=json.dumps(payload), timeout=30)
-    if r.status_code in (200, 201):
-        return r.json()
-    raise RuntimeError(f"PATCH domínio falhou ({r.status_code}): {r.text[:500]}")
+    last_txt = ""
+    for payload in ({"domains": [ref]}, {"domain": ref}):
+        r = requests.patch(url, headers=headers, data=json.dumps(payload), timeout=30)
+        if r.status_code in (200, 201):
+            return r.json()
+        last_txt = r.text[:500]
+        if r.status_code in (400, 422):
+            continue
+        break
+    raise RuntimeError(f"PATCH domínio falhou ({r.status_code}): {last_txt}")
 
 
 def aplicar_dominios(
