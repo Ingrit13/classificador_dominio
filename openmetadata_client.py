@@ -16,11 +16,6 @@ import requests
 OPENMETADATA_URL = os.environ.get("OPENMETADATA_URL", "").rstrip("/")
 OPENMETADATA_TOKEN = os.environ.get("OPENMETADATA_TOKEN", "")
 
-FALLBACK_DOMAINS = [
-    "pessoas", "financeiro", "folha_pagamento", "contratos", "compras",
-    "receita", "despesa", "logistica", "corregedoria", "saude", "educacao", "normas", "entidade",
-]
-
 
 def _auth_headers() -> Dict[str, str]:
     if not OPENMETADATA_TOKEN:
@@ -114,21 +109,31 @@ def tabelas_openmetadata_para_dataframe(tabelas: List[Dict[str, Any]]) -> pd.Dat
 
 def listar_dominios(limit: int = 1000) -> List[Dict[str, Any]]:
     """
-    Lista domínios disponíveis no OpenMetadata.
-    Retorna lista de {"name": str, "id": str}. Em falha de API, retorna fallback com id=None.
+    Lista domínios cadastrados no OpenMetadata (GET /api/v1/domains), com paginação quando a API enviar `paging.after`.
+    Retorna lista de {"name": str, "id": str}.
     """
-    if not OPENMETADATA_URL:
-        return [{"name": d, "id": None} for d in FALLBACK_DOMAINS]
-    url = f"{OPENMETADATA_URL}/api/v1/domains?limit={limit}"
-    try:
-        r = requests.get(url, headers=_auth_headers(), timeout=30)
+    if not OPENMETADATA_URL or not OPENMETADATA_TOKEN:
+        raise RuntimeError("OPENMETADATA_URL e OPENMETADATA_TOKEN devem estar definidos para listar domínios.")
+    url = f"{OPENMETADATA_URL}/api/v1/domains"
+    resultado: List[Dict[str, Any]] = []
+    after: Optional[str] = None
+    while True:
+        params: Dict[str, Any] = {"limit": min(limit, 1000)}
+        if after:
+            params["after"] = after
+        r = requests.get(url, headers=_auth_headers(), params=params, timeout=60)
         if r.status_code != 200:
-            return [{"name": d, "id": None} for d in FALLBACK_DOMAINS]
+            raise RuntimeError(f"Falha ao listar domínios ({r.status_code}): {r.text[:400]}")
         data = r.json()
-        domains = data.get("data", [])
-        return [{"name": d.get("name"), "id": d.get("id")} for d in domains if d.get("name")]
-    except Exception:
-        return [{"name": d, "id": None} for d in FALLBACK_DOMAINS]
+        for d in data.get("data", []):
+            nome = d.get("name")
+            if nome:
+                resultado.append({"name": nome, "id": d.get("id")})
+        paging = data.get("paging") or {}
+        after = paging.get("after")
+        if not after:
+            break
+    return resultado
 
 
 def get_table_by_fqn(table_fqn: str) -> Dict[str, Any]:
