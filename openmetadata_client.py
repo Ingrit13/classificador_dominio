@@ -366,7 +366,7 @@ def tabelas_openmetadata_para_dataframe(tabelas: List[Dict[str, Any]]) -> pd.Dat
 def listar_dominios(limit: int = 1000) -> List[Dict[str, Any]]:
     """
     Lista domínios cadastrados no OpenMetadata (GET /api/v1/domains), com paginação quando a API enviar `paging.after`.
-    Retorna lista de {"name": str, "id": str}.
+    Retorna lista de {"name": str, "id": str, "fullyQualifiedName": str}.
     """
     if not _om_url() or not _om_token():
         raise RuntimeError("OPENMETADATA_URL e OPENMETADATA_TOKEN devem estar definidos para listar domínios.")
@@ -384,7 +384,13 @@ def listar_dominios(limit: int = 1000) -> List[Dict[str, Any]]:
         for d in data.get("data", []):
             nome = d.get("name")
             if nome:
-                resultado.append({"name": nome, "id": d.get("id")})
+                resultado.append(
+                    {
+                        "name": nome,
+                        "id": d.get("id"),
+                        "fullyQualifiedName": d.get("fullyQualifiedName") or nome,
+                    }
+                )
         paging = data.get("paging") or {}
         after = paging.get("after")
         if not after:
@@ -416,26 +422,53 @@ def get_table_by_fqn(table_fqn: str) -> Dict[str, Any]:
     raise RuntimeError(f"Falha ao buscar tabela '{table_fqn}' {last_err or ''}")
 
 
-def patch_table_domain(table_id: str, domain_id: str) -> Dict[str, Any]:
+_JSON_PATCH_CONTENT_TYPE = "application/json-patch+json"
+
+
+def patch_table_domain(
+    table_id: str,
+    domain_id: str,
+    *,
+    domain_fqn: Optional[str] = None,
+) -> Dict[str, Any]:
     """
-    Atribui domínio à tabela via JSON merge PATCH.
-    Tenta ``domains`` (lista, OM recente) e depois ``domain`` (referência única, OM mais antigo).
+    Atribui domínio à tabela via **JSON Patch** (RFC 6902), como o OpenMetadata expõe em PATCH /tables/{id}:
+    ``Content-Type: application/json-patch+json``. Corpo ``application/json`` gera 415 no servidor Jersey.
     """
     if not _om_url() or not _om_token():
         raise RuntimeError("OPENMETADATA_URL e OPENMETADATA_TOKEN devem estar definidos nas variáveis de ambiente.")
     url = f"{_om_url()}/api/v1/tables/{table_id}"
-    ref = {"id": domain_id, "type": "domain"}
-    headers = {**_auth_headers(), "Content-Type": "application/json"}
+    ref: Dict[str, Any] = {"id": domain_id, "type": "domain"}
+    headers = {**_auth_headers(), "Content-Type": _JSON_PATCH_CONTENT_TYPE}
+
+    ops_variants: List[List[Dict[str, Any]]] = [
+        [{"op": "replace", "path": "/domains", "value": [ref]}],
+        [{"op": "add", "path": "/domains", "value": [ref]}],
+        [{"op": "replace", "path": "/domain", "value": ref}],
+        [{"op": "add", "path": "/domain", "value": ref}],
+    ]
+    if domain_fqn:
+        fq = domain_fqn.strip()
+        if fq:
+            ops_variants.extend(
+                [
+                    [{"op": "replace", "path": "/domain", "value": fq}],
+                    [{"op": "add", "path": "/domain", "value": fq}],
+                ]
+            )
+
+    last_status: int = 0
     last_txt = ""
-    for payload in ({"domains": [ref]}, {"domain": ref}):
-        r = requests.patch(url, headers=headers, data=json.dumps(payload), timeout=30)
+    for ops in ops_variants:
+        r = requests.patch(url, headers=headers, data=json.dumps(ops), timeout=30)
+        last_status = r.status_code
+        last_txt = (r.text or "")[:500]
         if r.status_code in (200, 201):
             return r.json()
-        last_txt = r.text[:500]
-        if r.status_code in (400, 422):
+        if r.status_code in (400, 404, 409, 415, 422, 500):
             continue
         break
-    raise RuntimeError(f"PATCH domínio falhou ({r.status_code}): {last_txt}")
+    raise RuntimeError(f"PATCH domínio falhou ({last_status}): {last_txt}")
 
 
 def aplicar_dominios(
@@ -454,6 +487,11 @@ def aplicar_dominios(
         return {"total": 0, "sucesso": 0, "falhas": 0, "logs": ["OPENMETADATA_URL e OPENMETADATA_TOKEN não configurados."]}
     domains = listar_dominios()
     domain_name_to_id = {d["name"]: d["id"] for d in domains if d.get("name") and d.get("id")}
+    domain_name_to_fqn = {
+        d["name"]: (d.get("fullyQualifiedName") or d.get("name") or "").strip()
+        for d in domains
+        if d.get("name")
+    }
     total, sucesso, falhas = 0, 0, 0
     logs = []
     for row in itens:
@@ -468,13 +506,20 @@ def aplicar_dominios(
             if not table_id:
                 raise RuntimeError("Resposta sem 'id' da tabela.")
             domain_id = domain_name_to_id.get(domain_name)
+            domain_fqn = domain_name_to_fqn.get(domain_name)
             if not domain_id:
                 domains = listar_dominios()
                 domain_name_to_id = {d["name"]: d["id"] for d in domains if d.get("name") and d.get("id")}
+                domain_name_to_fqn = {
+                    d["name"]: (d.get("fullyQualifiedName") or d.get("name") or "").strip()
+                    for d in domains
+                    if d.get("name")
+                }
                 domain_id = domain_name_to_id.get(domain_name)
+                domain_fqn = domain_name_to_fqn.get(domain_name)
             if not domain_id:
                 raise RuntimeError(f"Domínio '{domain_name}' não encontrado na API.")
-            patch_table_domain(table_id, domain_id)
+            patch_table_domain(table_id, domain_id, domain_fqn=domain_fqn or None)
             sucesso += 1
             logs.append(f"OK {table_fqn} <- {domain_name}")
         except Exception as e:
