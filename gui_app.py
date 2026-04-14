@@ -11,7 +11,15 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 from pathlib import Path
 
 # Garante que o diretório do script é o atual
-os.chdir(Path(__file__).resolve().parent)
+_script_dir = Path(__file__).resolve().parent
+os.chdir(_script_dir)
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(_script_dir / ".env")
+except ImportError:
+    pass
 
 try:
     from pipeline_core import treinar_com_csv, prever_csv, prever_dataframe, MODELO_PADRAO, MODELOS_DISPONIVEIS
@@ -189,6 +197,10 @@ def main():
 
     om_state = {"bases": [], "df_pred": None}
 
+    def _om_label_base(b: dict) -> str:
+        svc = b.get("service_pai") or "—"
+        return f"{b.get('name')} | {b.get('fullyQualifiedName')}  (serviço: {svc})"
+
     row_om1 = ttk.Frame(frame_om)
     row_om1.pack(fill=tk.X, pady=4)
     ttk.Label(row_om1, text="Base (database):").pack(side=tk.LEFT, padx=(0, 8))
@@ -204,14 +216,15 @@ def main():
         try:
             bases = listar_bases_dados()
             om_state["bases"] = bases
-            labels = []
-            for b in bases:
-                svc = b.get("service_pai") or "—"
-                labels.append(f"{b.get('name')} | {b.get('fullyQualifiedName')}  (serviço: {svc})")
+            labels = [_om_label_base(b) for b in bases]
+            # No Windows, Combobox em state=readonly muitas vezes não aplica values/set; alternar estado corrige.
+            cb_base_fqn.configure(state="normal")
+            cb_base_fqn.set("")
             cb_base_fqn["values"] = labels
             if labels:
-                cb_base_fqn.current(0)
                 cb_base_fqn.set(labels[0])
+            cb_base_fqn.configure(state="readonly")
+            cb_base_fqn.update_idletasks()
             log_om.insert(tk.END, f"Carregadas {len(bases)} base(s) (databases).\n")
             if not bases:
                 log_om.insert(
@@ -230,12 +243,16 @@ def main():
     lbl_om_pred.pack(side=tk.LEFT)
 
     def _om_fqn_base_selecionada() -> str:
+        texto = (cb_base_fqn.get() or "").strip()
+        if not texto or not om_state["bases"]:
+            return ""
+        for b in om_state["bases"]:
+            if _om_label_base(b) == texto:
+                return b.get("fullyQualifiedName") or ""
         idx = cb_base_fqn.current()
-        if idx < 0 or not om_state["bases"]:
-            return ""
-        if idx >= len(om_state["bases"]):
-            return ""
-        return om_state["bases"][idx].get("fullyQualifiedName") or ""
+        if 0 <= idx < len(om_state["bases"]):
+            return om_state["bases"][idx].get("fullyQualifiedName") or ""
+        return ""
 
     btn_om_buscar = ttk.Button(row_om2, text="Buscar tabelas e gerar previsões")
 

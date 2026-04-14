@@ -12,6 +12,13 @@ from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 import pandas as pd
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except ImportError:
+    pass
+
 from pipeline_core import treinar_com_csv, prever_csv, MODELO_PADRAO, MODELOS_DISPONIVEIS
 from openmetadata_client import (
     configurado as om_configurado,
