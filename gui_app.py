@@ -35,6 +35,8 @@ try:
         listar_bases_dados,
         listar_tabelas_por_database,
         tabelas_openmetadata_para_dataframe,
+        _om_url,
+        _auth_headers,
     )
 except ImportError:
     om_configurado = lambda: False
@@ -43,6 +45,94 @@ except ImportError:
     listar_bases_dados = lambda: []
     listar_tabelas_por_database = lambda fqn: []
     tabelas_openmetadata_para_dataframe = lambda t: pd.DataFrame()
+    _om_url = lambda: ""
+    _auth_headers = lambda: {}
+
+
+def baixar_dados_worker(
+    saida_path: str,
+    somente_com_dominio: bool,
+    log_widget: scrolledtext.ScrolledText,
+    btn: ttk.Button,
+):
+    try:
+        import requests as _req
+        btn.config(state="disabled")
+        log_widget.delete("1.0", tk.END)
+        base_url = f"{_om_url()}/api/v1"
+        headers = {**_auth_headers(), "accept": "application/json"}
+        _req.packages.urllib3.disable_warnings()
+        log_widget.insert(tk.END, "Buscando tabelas no catálogo…\n")
+        log_widget.update()
+
+        def montar_linha(t):
+            fqn = t.get("fullyQualifiedName", "")
+            partes = fqn.split(".") if fqn else []
+            colunas = [c["name"] for c in t.get("columns", []) if c.get("name")]
+            return {
+                "schema": partes[0] if partes else "",
+                "nome_tabela": partes[-1] if partes else "",
+                "qtd_colunas": len(colunas),
+                "nome_colunas": "{" + ",".join(f"'{c}'" for c in colunas) + "}",
+                "dominio": (t.get("domains") or [{}])[0].get("displayName", ""),
+                "texto": t.get("description") or "",
+            }
+
+        rows = []
+        if somente_com_dominio:
+            offset = 0
+            size = 100
+            while True:
+                resp = _req.get(
+                    f"{base_url}/search/query",
+                    headers=headers,
+                    params={"q": "domains:*", "index": "table_search_index", "from": offset, "size": size},
+                    verify=False,
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                hits = resp.json().get("hits", {}).get("hits", [])
+                if not hits:
+                    break
+                for hit in hits:
+                    rows.append(montar_linha(hit["_source"]))
+                log_widget.insert(tk.END, f"  {len(rows)} tabelas com domínio obtidas até agora…\n")
+                log_widget.update()
+                offset += size
+        else:
+            after = None
+            while True:
+                params = {"limit": 100, "fields": "columns,tags,domains"}
+                if after:
+                    params["after"] = after
+                resp = _req.get(
+                    f"{base_url}/tables",
+                    headers=headers,
+                    params=params,
+                    verify=False,
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                payload = resp.json()
+                for t in payload["data"]:
+                    rows.append(montar_linha(t))
+                after = payload.get("paging", {}).get("after")
+                log_widget.insert(tk.END, f"  {len(rows)} tabelas obtidas até agora…\n")
+                log_widget.update()
+                if not after:
+                    break
+
+        log_widget.insert(tk.END, f"Total obtido: {len(rows)} tabelas.\n")
+        log_widget.update()
+        df = pd.DataFrame(rows)
+        df.to_csv(saida_path, index=False, encoding="utf-8-sig")
+        log_widget.insert(tk.END, f"\n{len(df)} tabelas exportadas → {saida_path}\n")
+        messagebox.showinfo("Sucesso", f"{len(df)} tabelas exportadas para:\n{saida_path}")
+    except Exception as e:
+        log_widget.insert(tk.END, f"\nErro: {e}\n")
+        messagebox.showerror("Erro ao baixar dados", str(e))
+    finally:
+        btn.config(state="normal")
 
 
 def treinar_worker(csv_path: str, modelo: str, log_widget: scrolledtext.ScrolledText, btn: ttk.Button):
@@ -98,6 +188,75 @@ def main():
 
     notebook = ttk.Notebook(root)
     notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+    # ---- Aba Baixar Dados ----
+    frame_baixar = ttk.Frame(notebook, padding=10)
+    notebook.add(frame_baixar, text="Baixar Dados")
+
+    ttk.Label(
+        frame_baixar,
+        text="Baixar tabelas do catálogo OpenMetadata e salvar como CSV.",
+        font=("" , 9),
+    ).pack(anchor=tk.W, pady=(0, 6))
+
+    opcao_download = tk.StringVar(value="todos")
+    ttk.Radiobutton(
+        frame_baixar,
+        text="Baixar todos os dados",
+        variable=opcao_download,
+        value="todos",
+    ).pack(anchor=tk.W)
+    ttk.Radiobutton(
+        frame_baixar,
+        text="Baixar somente dados com domínio (catálogo preenchido)",
+        variable=opcao_download,
+        value="com_dominio",
+    ).pack(anchor=tk.W, pady=(0, 8))
+
+    ttk.Label(frame_baixar, text="Salvar CSV em:").pack(anchor=tk.W)
+    path_baixar_saida = tk.StringVar(
+        value=str(Path(__file__).resolve().parent / "tabelas_openmetadata.csv")
+    )
+    row_baixar = ttk.Frame(frame_baixar)
+    row_baixar.pack(fill=tk.X, pady=4)
+    ttk.Entry(row_baixar, textvariable=path_baixar_saida, width=60).pack(
+        side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8)
+    )
+
+    def escolher_saida_baixar():
+        p = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv")],
+            title="Onde salvar o CSV",
+        )
+        if p:
+            path_baixar_saida.set(p)
+
+    ttk.Button(row_baixar, text="Escolher…", command=escolher_saida_baixar).pack(side=tk.RIGHT)
+
+    log_baixar = scrolledtext.ScrolledText(frame_baixar, height=14, wrap=tk.WORD, font=("Consolas", 9))
+    log_baixar.pack(fill=tk.BOTH, expand=True, pady=8)
+
+    def iniciar_download():
+        if not om_configurado():
+            messagebox.showwarning(
+                "OpenMetadata",
+                "Defina OPENMETADATA_URL e OPENMETADATA_TOKEN nas variáveis de ambiente.",
+            )
+            return
+        saida = path_baixar_saida.get().strip()
+        if not saida:
+            messagebox.showwarning("Aviso", "Informe onde salvar o arquivo CSV.")
+            return
+        somente_com_dominio = opcao_download.get() == "com_dominio"
+        threading.Thread(
+            target=baixar_dados_worker,
+            args=(saida, somente_com_dominio, log_baixar, btn_baixar),
+            daemon=True,
+        ).start()
+
+    btn_baixar = ttk.Button(frame_baixar, text="Baixar dados", command=iniciar_download)
+    btn_baixar.pack(pady=4)
 
     # ---- Aba Treino ----
     frame_treino = ttk.Frame(notebook, padding=10)
