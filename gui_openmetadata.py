@@ -84,15 +84,20 @@ def _nome_linha_previsao(row: pd.Series) -> str:
     return fqn
 
 
+_MARK_SIM = "Sim"
+_MARK_NAO = "Não"
+
+
 def _preencher_previsoes(tree: ttk.Treeview, df: pd.DataFrame) -> None:
+    """Primeira coluna «Enviar»: Sim = incluir no PATCH ao OpenMetadata (padrão em todas as linhas)."""
     _tree_clear(tree)
     _tree_configure(
         tree,
-        ("nome", "dominio", "confianca"),
-        ("Nome", "Domínio", "Confiança (%)"),
-        (260, 160, 100),
+        ("enviar", "nome", "dominio", "confianca"),
+        ("Enviar", "Nome", "Domínio", "Confiança (%)"),
+        (56, 240, 150, 100),
     )
-    for _, row in df.iterrows():
+    for i, (_, row) in enumerate(df.iterrows()):
         nome = _nome_linha_previsao(row)
         dom = str(row.get("predicted_domain", "") or "")
         conf = row.get("confidence")
@@ -100,10 +105,9 @@ def _preencher_previsoes(tree: ttk.Treeview, df: pd.DataFrame) -> None:
             conf_txt = ""
         else:
             c = float(conf)
-            # sklearn: probabilidade em [0, 1]; se vier já em escala 0–100, não multiplicar de novo
             pct = c * 100 if c <= 1.0 else c
             conf_txt = f"{pct:.2f}%"
-        tree.insert("", tk.END, values=(nome, dom, conf_txt))
+        tree.insert("", tk.END, iid=str(i), values=(_MARK_SIM, nome, dom, conf_txt))
 
 
 def main() -> None:
@@ -125,9 +129,9 @@ def main() -> None:
         frame,
         text=(
             "Fluxo: 1) Carregar lista do catálogo; 2) escolher uma base; "
-            "3) Buscar tabelas e gerar previsões (tabela abaixo); "
-            "4) Aplicar domínios no OpenMetadata. "
-            "«Listar domínios» preenche a tabela com Nome e ID. "
+            "3) Buscar tabelas e gerar previsões — coluna «Enviar» vem todas como Sim; clique na célula para alternar Sim/Não; "
+            "4) Aplicar domínios envia só as linhas com Enviar=Sim. "
+            "«Listar domínios» substitui a tabela (para aplicar domínios, busque previsões de novo). "
             "O modelo deve existir (treine com gui_app.py na aba Treino ou copie o .pkl esperado)."
         ),
         wraplength=720,
@@ -136,7 +140,7 @@ def main() -> None:
     lbl_status = ttk.Label(frame, text="", font=("", 9))
     lbl_status.pack(anchor=tk.W, pady=(0, 4))
 
-    om_state: dict = {"bases": [], "df_pred": None}
+    om_state: dict = {"bases": [], "df_pred": None, "modo_tabela": ""}
 
     def _set_status(msg: str) -> None:
         lbl_status.config(text=msg)
@@ -174,6 +178,24 @@ def main() -> None:
     scroll_x.grid(row=1, column=0, sticky="ew")
     tree_frm.rowconfigure(0, weight=1)
     tree_frm.columnconfigure(0, weight=1)
+
+    def _on_tree_click_previsoes(event: tk.Event) -> None:
+        if om_state.get("modo_tabela") != "previsoes":
+            return
+        if tree_results.identify_region(event.x, event.y) != "cell":
+            return
+        if tree_results.identify_column(event.x) != "#1":
+            return
+        rowid = tree_results.identify_row(event.y)
+        if not rowid:
+            return
+        vals = list(tree_results.item(rowid, "values"))
+        if len(vals) < 4:
+            return
+        vals[0] = _MARK_NAO if vals[0] == _MARK_SIM else _MARK_SIM
+        tree_results.item(rowid, values=tuple(vals))
+
+    tree_results.bind("<Button-1>", _on_tree_click_previsoes)
 
     ttk.Label(frame, text="Log (aplicar domínios e avisos):", font=("", 9)).pack(anchor=tk.W)
     log_om = scrolledtext.ScrolledText(frame, height=7, wrap=tk.WORD, font=("Consolas", 9))
@@ -221,20 +243,26 @@ def main() -> None:
 
     def om_buscar_tabelas_e_prever_worker(fqn_db: str) -> None:
         def on_ok(df_pred: pd.DataFrame, n: int) -> None:
+            df_pred = df_pred.reset_index(drop=True)
             om_state["df_pred"] = df_pred
+            om_state["modo_tabela"] = "previsoes"
             _preencher_previsoes(tree_results, df_pred)
             lf_result.config(text="Tabelas e previsões")
             lbl_om_pred.config(text=f"Previsões em memória: {n} tabela(s).")
-            _set_status(f"{n} tabela(s) com previsão. Use «Aplicar domínios» para gravar no catálogo.")
+            _set_status(
+                f"{n} tabela(s); todas com Enviar=Sim. Clique na coluna Enviar para excluir da aplicação no catálogo."
+            )
 
         def on_empty(msg: str) -> None:
             om_state["df_pred"] = None
+            om_state["modo_tabela"] = ""
             _tree_clear(tree_results)
             lbl_om_pred.config(text="Nenhuma previsão em memória.")
             _set_status(msg)
 
         def on_err(e: BaseException) -> None:
             om_state["df_pred"] = None
+            om_state["modo_tabela"] = ""
             _tree_clear(tree_results)
             lbl_om_pred.config(text="Nenhuma previsão em memória.")
             _set_status(f"Erro: {e}")
@@ -287,9 +315,10 @@ def main() -> None:
             return
         try:
             doms = listar_dominios()
+            om_state["modo_tabela"] = "dominios"
             _preencher_dominios(tree_results, doms)
             lf_result.config(text="Domínios")
-            _set_status(f"{len(doms)} domínio(s) listados.")
+            _set_status(f"{len(doms)} domínio(s) listados. (Previsões continuam em memória; reaplique a busca para ver a grade com Enviar.)")
         except Exception as e:
             _tree_clear(tree_results)
             _set_status(f"Erro: {e}")
@@ -301,6 +330,13 @@ def main() -> None:
             log_om.insert(tk.END, "Defina OPENMETADATA_URL e OPENMETADATA_TOKEN nas variáveis de ambiente.\n")
             messagebox.showwarning("OpenMetadata", "Variáveis de ambiente não configuradas.")
             return
+        if om_state.get("modo_tabela") != "previsoes":
+            messagebox.showwarning(
+                "Aviso",
+                "A tabela atual não é a de previsões (coluna Enviar). "
+                "Execute «Buscar tabelas e gerar previsões» para exibir a grade e escolher o que enviar.",
+            )
+            return
         df = om_state.get("df_pred")
         if df is None or df.empty:
             messagebox.showwarning("Aviso", "Execute primeiro 'Buscar tabelas e gerar previsões'.")
@@ -310,8 +346,20 @@ def main() -> None:
                 if col not in df.columns:
                     messagebox.showerror("Erro", f"Faltando coluna '{col}' nas previsões.")
                     return
-            itens = df[["table_fqn", "predicted_domain"]].to_dict("records")
-            log_om.insert(tk.END, f"Aplicando {len(itens)} linha(s) no OpenMetadata…\n\n")
+            idx_marcados: List[int] = []
+            for iid in tree_results.get_children():
+                vals = tree_results.item(iid, "values")
+                if vals and vals[0] == _MARK_SIM:
+                    try:
+                        idx_marcados.append(int(iid))
+                    except ValueError:
+                        continue
+            if not idx_marcados:
+                messagebox.showwarning("Aviso", "Nenhuma linha com «Enviar» = Sim. Marque ao menos uma tabela.")
+                return
+            df_sel = df.iloc[sorted(set(idx_marcados))].copy()
+            itens = df_sel[["table_fqn", "predicted_domain"]].to_dict("records")
+            log_om.insert(tk.END, f"Aplicando {len(itens)} linha(s) selecionada(s) (de {len(df)} no total) no OpenMetadata…\n\n")
             log_om.update()
             resultado = aplicar_dominios(itens)
             log_om.insert(
