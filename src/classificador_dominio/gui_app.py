@@ -1,7 +1,10 @@
 """
 Interface gráfica para treino e previsão do classificador de domínios.
 O usuário escolhe o arquivo CSV (para treino ou para previsão) e executa o fluxo.
-Uso: py gui_app.py
+
+Uso (na raiz do repositório)::
+
+    python -m classificador_dominio.gui_app
 """
 import os
 import sys
@@ -10,25 +13,26 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 from pathlib import Path
 
-# Garante que o diretório do script é o atual
-_script_dir = Path(__file__).resolve().parent
-os.chdir(_script_dir)
+from .paths import repo_root
+
+_REPO = repo_root()
+os.chdir(_REPO)
 
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(_script_dir / ".env")
+    load_dotenv(_REPO / ".env")
 except ImportError:
     pass
 
 try:
-    from pipeline_core import treinar_com_csv, prever_csv, MODELO_PADRAO, MODELOS_DISPONIVEIS
+    from .pipeline_core import treinar_com_csv, prever_csv, MODELO_PADRAO, MODELOS_DISPONIVEIS
     import pandas as pd
 except ImportError:
     messagebox.showerror("Erro", "Instale as dependências: pip install pandas numpy scikit-learn")
     sys.exit(1)
 try:
-    from openmetadata_client import configurado as om_configurado, _om_url, _auth_headers
+    from .openmetadata_client import configurado as om_configurado, _om_url, _auth_headers
 except ImportError:
     om_configurado = lambda: False
     _om_url = lambda: ""
@@ -182,7 +186,7 @@ def main():
     ttk.Label(
         frame_baixar,
         text="Baixar tabelas do catálogo OpenMetadata e salvar como CSV.",
-        font=("" , 9),
+        font=("", 9),
     ).pack(anchor=tk.W, pady=(0, 6))
 
     opcao_download = tk.StringVar(value="todos")
@@ -200,9 +204,7 @@ def main():
     ).pack(anchor=tk.W, pady=(0, 8))
 
     ttk.Label(frame_baixar, text="Salvar CSV em:").pack(anchor=tk.W)
-    path_baixar_saida = tk.StringVar(
-        value=str(Path(__file__).resolve().parent / "tabelas_openmetadata.csv")
-    )
+    path_baixar_saida = tk.StringVar(value=str(_REPO / "tabelas_openmetadata.csv"))
     row_baixar = ttk.Frame(frame_baixar)
     row_baixar.pack(fill=tk.X, pady=4)
     ttk.Entry(row_baixar, textvariable=path_baixar_saida, width=60).pack(
@@ -301,7 +303,7 @@ def main():
     ttk.Button(row2, text="Selecionar CSV…", command=escolher_prever).pack(side=tk.RIGHT)
 
     ttk.Label(frame_prever, text="Salvar resultado em:").pack(anchor=tk.W)
-    path_saida = tk.StringVar(value=str(Path(__file__).resolve().parent / "previsoes_resultado.csv"))
+    path_saida = tk.StringVar(value=str(_REPO / "previsoes_resultado.csv"))
     row3 = ttk.Frame(frame_prever)
     row3.pack(fill=tk.X, pady=4)
     ttk.Entry(row3, textvariable=path_saida, width=60).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 8))

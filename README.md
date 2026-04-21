@@ -1,82 +1,101 @@
 # Classificador de domínios (tabelas)
 
-Modelo de classificação automática de domínios de tabelas baseado em **Support Vector Machine (SVM)** (TF-IDF + SVM). Integração opcional com OpenMetadata para tags de domínio.
+Modelo de classificação automática de domínios de tabelas baseado em **Support Vector Machine (SVM)** (TF-IDF + SVM). Integração opcional com OpenMetadata.
 
-## Formas de uso (informar CSV)
+## Layout do projeto (pacote Python)
 
-### 1. Tela pop-up (GUI)
+Código da aplicação em **`src/classificador_dominio/`** (layout *src* recomendado pela [PyPA](https://packaging.python.org/en/latest/discussions/src-layout-vs-flat-layout/)):
 
-Interface gráfica para escolher o CSV e treinar ou prever:
+| Caminho | Conteúdo |
+|---------|----------|
+| `src/classificador_dominio/` | Pacote importável: `pipeline_core`, `openmetadata_client`, `api`, GUIs |
+| `data/` | CSVs de exemplo (`dataset_V9.csv`, etc.) |
+| `scripts/` | Scripts executados por caminho (`run_pipeline.py`) |
+| `tests/` | Testes (`pytest`) |
 
-```bash
-py gui_app.py
-```
+Na **raiz** ficam `pyproject.toml`, `README.md`, `.env.example`, artefatos gerados (`modelo_svm_treinado.pkl`, `matriz_confusao.png`, `resultados_api/`, …).
 
-- **Treino**: botão "Selecionar CSV…" → escolha o arquivo com colunas `schema`, `nome_tabela`, `qtd_colunas`, `nome_colunas`, `dominio`. Depois clique em "Treinar modelo".
-- **Previsão**: na aba "Previsão", selecione um CSV (sem coluna `dominio`), informe onde salvar o resultado e clique em "Gerar previsões".
+### Instalação
 
-### 2. API REST
-
-Servir a API e enviar o CSV por upload:
-
-```bash
-pip install fastapi uvicorn python-multipart
-py -m uvicorn api:app --reload --host 0.0.0.0 --port 8000
-```
-
-- **Treinar**: `POST /treinar` com o CSV no body (form-data, campo `arquivo`). Resposta: acurácia, relatório, etc.
-- **Prever**: `POST /prever` com o CSV no body. Resposta: arquivo CSV com colunas `predicted_domain` e `confidence`.
-
-Documentação interativa: http://localhost:8000/docs
-
-### 3. Executável
-
-Gerar um `.exe` da GUI (Windows) com PyInstaller:
+Na raiz do repositório:
 
 ```bash
-pip install pyinstaller
-pyinstaller --onefile --windowed --name ClassificadorDominios gui_app.py
+pip install -e .
 ```
 
-O executável ficará em `dist/ClassificadorDominios.exe`. Ao rodar, use "Selecionar CSV…" e depois "Treinar modelo" ou "Gerar previsões".
+Com API e Jupyter (opcional):
 
-**Observação**: o primeiro uso pode ser lento (carregar modelo/treino). Para incluir o modelo já treinado no executável, coloque `modelo_svm_treinado.pkl` na mesma pasta do script antes de rodar o `pyinstaller` e use `--add-data "modelo_svm_treinado.pkl;."` (Windows) para embutir.
+```bash
+pip install -e ".[api,jupyter]"
+```
+
+## Formas de uso
+
+### 1. GUI principal (Treino / Previsão / Baixar dados)
+
+```bash
+python -m classificador_dominio.gui_app
+```
+
+- **Treino**: CSV com `schema`, `nome_tabela`, `qtd_colunas`, `nome_colunas`, `dominio`.
+- **Previsão**: CSV sem `dominio`; saída com `predicted_domain` e `confidence`.
+
+O processo usa o diretório **raiz do repositório** como cwd (modelo `.pkl` e `.env` na raiz).
+
+### 2. GUI só OpenMetadata
+
+```bash
+python -m classificador_dominio.gui_openmetadata
+```
+
+### 3. API REST
+
+```bash
+pip install -e ".[api]"
+uvicorn classificador_dominio.api:app --reload --host 0.0.0.0 --port 8000
+```
+
+- **Treinar**: `POST /treinar` (form-data, campo `arquivo`).
+- **Prever**: `POST /prever` — resposta CSV com `predicted_domain` e `confidence`.
+
+Documentação: http://localhost:8000/docs
+
+### 4. Pipeline em linha de comando (script)
+
+```bash
+py scripts/run_pipeline.py
+```
+
+Usa `data/dataset_V9.csv` e grava artefatos na **raiz** do repositório (`modelo_svm_treinado.pkl`, `matriz_confusao.png`, etc.).
+
+### 5. Testes
+
+```bash
+pip install -e ".[dev]"
+pytest
+```
+
+### 6. Executável (Windows, PyInstaller)
+
+Após `pip install -e .`, crie um script de entrada na raiz (por exemplo `launcher_gui.py`) com `from classificador_dominio.gui_app import main` e `main()`, e rode o PyInstaller sobre esse arquivo, usando `--collect-submodules classificador_dominio` se necessário. O `.exe` deve ser distribuído junto com `.env` (ou variáveis de ambiente) e `modelo_svm_treinado.pkl` na pasta de trabalho desejada.
 
 ## CSV esperado
 
-- **Treino**: colunas `schema`, `nome_tabela`, `qtd_colunas`, `nome_colunas`, `dominio`.
-- **Previsão**: mesmas colunas, exceto `dominio`. O resultado terá `predicted_domain` e `confidence`.
+- **Treino**: `schema`, `nome_tabela`, `qtd_colunas`, `nome_colunas`, `dominio`.
+- **Previsão**: sem `dominio`; saída com `predicted_domain` e `confidence`.
 
-## Integração OpenMetadata (etapa 3)
-
-Para listar domínios e aplicar domínios às tabelas no catálogo, configure as **variáveis de ambiente**:
+## OpenMetadata
 
 | Variável | Descrição |
 |----------|-----------|
-| `OPENMETADATA_URL` | URL base da API (ex.: `https://catalogo.cge.mt.gov.br`) |
-| `OPENMETADATA_TOKEN` | Token JWT ou PAT (Bearer) para autenticação |
+| `OPENMETADATA_URL` | URL base da API |
+| `OPENMETADATA_TOKEN` | Token JWT ou PAT (Bearer) |
 
-Exemplo no Windows (PowerShell):
-```powershell
-$env:OPENMETADATA_URL = "https://catalogo.cge.mt.gov.br"
-$env:OPENMETADATA_TOKEN = "seu_token_jwt_aqui"
-```
+- **API**: `GET /openmetadata/domains`; `POST /openmetadata/aplicar-dominios` (CSV ou JSON `itens`).
+- **GUI OpenMetadata**: fluxo catálogo → previsões → aplicar só linhas marcadas na coluna **Enviar**.
 
-Exemplo no Linux/macOS:
-```bash
-export OPENMETADATA_URL="https://catalogo.cge.mt.gov.br"
-export OPENMETADATA_TOKEN="seu_token_jwt_aqui"
-```
-
-- **API**: `GET /openmetadata/domains` lista domínios; `POST /openmetadata/aplicar-dominios` envia CSV (colunas `table_fqn`, `predicted_domain`) ou JSON `{"itens": [...]}` para aplicar domínios às tabelas.
-- **GUI OpenMetadata** (fluxo catálogo + previsão + aplicar domínios): `py gui_openmetadata.py` — **Carregar lista do catálogo**, escolher base, **Buscar tabelas e gerar previsões**, **Aplicar domínios no OpenMetadata**. O `gui_app.py` mantém só abas Baixar Dados, Treino e Previsão; na **Previsão** com CSV local o `table_fqn` é `schema.nome_tabela` (pode diferir do FQN do catálogo).
-
-Há um `.env.example` no projeto; copie para `.env` e preencha (se usar biblioteca que carrega `.env`).
+Copie `.env.example` para `.env` na raiz do projeto.
 
 ## Dependências
 
-```bash
-pip install -r requirements.txt
-```
-
-Para só treino/previsão (sem API): pandas, numpy, scikit-learn, matplotlib, joblib. Para OpenMetadata: requests.
+Definidas em **`pyproject.toml`**. O arquivo `requirements.txt` contém apenas `-e .` para instalar o projeto localmente.

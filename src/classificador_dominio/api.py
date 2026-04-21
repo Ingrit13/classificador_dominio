@@ -1,7 +1,11 @@
 """
 API REST para treino, previsão e integração OpenMetadata.
-Uso: py -m uvicorn api:app --reload
-Variáveis de ambiente para OpenMetadata: OPENMETADATA_URL, OPENMETADATA_TOKEN
+
+Uso (na raiz do repositório, com o pacote instalado em modo editável)::
+
+    uvicorn classificador_dominio.api:app --reload
+
+Variáveis de ambiente para OpenMetadata: ``OPENMETADATA_URL``, ``OPENMETADATA_TOKEN``.
 """
 import io
 from pathlib import Path
@@ -12,22 +16,24 @@ from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
 import pandas as pd
 
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv(Path(__file__).resolve().parent / ".env")
-except ImportError:
-    pass
-
-from pipeline_core import treinar_com_csv, prever_csv, MODELO_PADRAO, MODELOS_DISPONIVEIS
-from openmetadata_client import (
+from .paths import repo_root
+from .pipeline_core import treinar_com_csv, prever_csv, MODELO_PADRAO, MODELOS_DISPONIVEIS
+from .openmetadata_client import (
     configurado as om_configurado,
     listar_dominios,
     aplicar_dominios,
 )
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv(repo_root() / ".env")
+except ImportError:
+    pass
+
+_REPO = repo_root()
 app = FastAPI(title="Classificador de Domínios", version="1.0")
-DIR_RESULTADOS = Path(__file__).resolve().parent / "resultados_api"
+DIR_RESULTADOS = _REPO / "resultados_api"
 DIR_RESULTADOS.mkdir(exist_ok=True)
 
 
@@ -48,7 +54,7 @@ def root():
 
 @app.get("/saude")
 def saude():
-    return {"status": "ok", "modelo_padrao_existe": Path(MODELO_PADRAO).exists()}
+    return {"status": "ok", "modelo_padrao_existe": (_REPO / MODELO_PADRAO).exists()}
 
 
 @app.get("/modelos")
@@ -103,10 +109,9 @@ async def prever(
 ):
     if not arquivo.filename or not arquivo.filename.lower().endswith(".csv"):
         raise HTTPException(400, "Envie um arquivo .csv")
-    base = Path(__file__).resolve().parent
-    modelo_path = base / "resultados_api" / "modelo_treinado.pkl"
+    modelo_path = DIR_RESULTADOS / "modelo_treinado.pkl"
     if not modelo_path.exists():
-        modelo_path = base / MODELO_PADRAO
+        modelo_path = _REPO / MODELO_PADRAO
     if not modelo_path.exists():
         raise HTTPException(400, "Nenhum modelo encontrado. Treine antes em POST /treinar.")
     try:
@@ -131,6 +136,7 @@ async def prever(
 
 # ---------- OpenMetadata (variáveis de ambiente: OPENMETADATA_URL, OPENMETADATA_TOKEN) ----------
 
+
 @app.get("/openmetadata/domains")
 def openmetadata_dominios():
     """Lista domínios do catálogo. Requer OPENMETADATA_URL e OPENMETADATA_TOKEN."""
@@ -149,7 +155,7 @@ class AplicarDominiosBody(BaseModel):
 @app.post("/openmetadata/aplicar-dominios")
 async def openmetadata_aplicar(
     arquivo: Optional[UploadFile] = File(None, description="CSV com table_fqn e predicted_domain"),
-    body: Optional[AplicarDominiosBody] = Body(None, description="JSON: { \"itens\": [ { \"table_fqn\": \"...\", \"predicted_domain\": \"...\" } ] }"),
+    body: Optional[AplicarDominiosBody] = Body(None, description='JSON: { "itens": [ { "table_fqn": "...", "predicted_domain": "..." } ] }'),
 ):
     """
     Aplica domínios às tabelas no OpenMetadata.

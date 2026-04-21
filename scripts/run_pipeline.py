@@ -1,10 +1,12 @@
 # Script para executar o pipeline (preparação + treino + avaliação) fora do Jupyter.
-# Uso: py run_pipeline.py
+# Uso (na raiz do repositório): py scripts/run_pipeline.py
+# Dataset padrão: data/dataset_V9.csv
 
 import os
 import re
 import math
 import unicodedata
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -15,21 +17,24 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.svm import SVC
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
 import matplotlib
-matplotlib.use("Agg")  # backend sem display
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# --- Parâmetros ---
-CSV_PATH = "dataset_V9.csv"
+_REPO = Path(__file__).resolve().parent.parent
+CSV_PATH = str(_REPO / "data" / "dataset_V9.csv")
 ROTULO = "dominio"
 TEXT_COLS = ["schema", "nome_tabela", "qtd_colunas", "nome_colunas"]
 TEST_SIZE = 0.30
 RANDOM_STATE = 42
 
-def main():
-    os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    print("=== 1) Preparação dos Dados & Split ===\n")
 
-    # Carregar dataset
+def main():
+    os.chdir(_REPO)
+    print("=== 1) Preparação dos Dados & Split ===\n")
+    print(f"Diretório de trabalho: {_REPO}")
+    print(f"CSV: {CSV_PATH}\n")
+
     try:
         df = pd.read_csv(CSV_PATH, sep=None, engine="python")
     except Exception:
@@ -48,7 +53,6 @@ def main():
     df = df[df[ROTULO].notna()]
     df = df[df[ROTULO].str.strip() != ""]
 
-    # Pré-processamento
     def preprocess_text(text):
         if text is None:
             return ""
@@ -74,7 +78,6 @@ def main():
     df["texto"] = df["texto"].apply(preprocess_text)
     df = df[df["texto"].str.strip() != ""]
 
-    # Classes raras
     counts = df[ROTULO].value_counts()
     min_test = math.ceil(1 / TEST_SIZE)
     min_train = math.ceil(1 / (1 - TEST_SIZE))
@@ -94,18 +97,20 @@ def main():
         X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
     )
     print(f"Split: train={len(y_train)} | test={len(y_test)}")
-    np.save("X_train.npy", X_train)
-    np.save("X_test.npy", X_test)
-    np.save("y_train.npy", y_train)
-    np.save("y_test.npy", y_test)
-    df[["texto", ROTULO]].to_csv("texto_preprocessado.csv", index=False)
-    print("Arquivos salvos: X_train.npy, X_test.npy, y_train.npy, y_test.npy, texto_preprocessado.csv\n")
+    np.save(_REPO / "X_train.npy", X_train)
+    np.save(_REPO / "X_test.npy", X_test)
+    np.save(_REPO / "y_train.npy", y_train)
+    np.save(_REPO / "y_test.npy", y_test)
+    df[["texto", ROTULO]].to_csv(_REPO / "texto_preprocessado.csv", index=False)
+    print("Arquivos salvos na raiz do projeto: X_train.npy, X_test.npy, y_train.npy, y_test.npy, texto_preprocessado.csv\n")
 
     print("=== 2) Treino & Avaliação (TF-IDF + SVM) ===\n")
-    pipeline = Pipeline([
-        ("tfidf", TfidfVectorizer(ngram_range=(1, 2), max_df=0.9, min_df=2, sublinear_tf=True)),
-        ("svm", SVC(kernel="linear", probability=True, class_weight="balanced", random_state=42)),
-    ])
+    pipeline = Pipeline(
+        [
+            ("tfidf", TfidfVectorizer(ngram_range=(1, 2), max_df=0.9, min_df=2, sublinear_tf=True)),
+            ("svm", SVC(kernel="linear", probability=True, class_weight="balanced", random_state=42)),
+        ]
+    )
     pipeline.fit(X_train, y_train)
     y_pred = pipeline.predict(X_test)
     print("Relatório de Classificação:\n", classification_report(y_test, y_pred, zero_division=0))
@@ -126,13 +131,14 @@ def main():
         for j in range(cm.shape[1]):
             ax.text(j, i, cm[i, j], ha="center", va="center")
     fig.tight_layout()
-    plt.savefig("matriz_confusao.png", dpi=150)
+    plt.savefig(_REPO / "matriz_confusao.png", dpi=150)
     plt.close()
     print("Matriz de confusão salva em: matriz_confusao.png")
 
-    joblib.dump(pipeline, "modelo_svm_treinado.pkl")
+    joblib.dump(pipeline, _REPO / "modelo_svm_treinado.pkl")
     print("Modelo salvo em: modelo_svm_treinado.pkl")
     print("\n=== Pipeline concluído com sucesso. ===")
+
 
 if __name__ == "__main__":
     main()

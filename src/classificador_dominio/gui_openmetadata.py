@@ -2,7 +2,9 @@
 Janela só com o fluxo OpenMetadata (catálogo, previsão em memória, aplicar domínios).
 Requer o mesmo modelo treinado que a GUI completa (MODELO_PADRAO em pipeline_core).
 
-Uso: py gui_openmetadata.py
+Uso (na raiz do repositório)::
+
+    python -m classificador_dominio.gui_openmetadata
 """
 from __future__ import annotations
 
@@ -14,19 +16,21 @@ from tkinter import ttk, messagebox, scrolledtext
 from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
-_script_dir = Path(__file__).resolve().parent
-os.chdir(_script_dir)
+from .paths import repo_root
+
+_REPO = repo_root()
+os.chdir(_REPO)
 
 try:
     from dotenv import load_dotenv
 
-    load_dotenv(_script_dir / ".env")
+    load_dotenv(_REPO / ".env")
 except ImportError:
     pass
 
 try:
     import pandas as pd
-    from pipeline_core import prever_dataframe, MODELO_PADRAO
+    from .pipeline_core import prever_dataframe, MODELO_PADRAO
 except ImportError:
     root = tk.Tk()
     root.withdraw()
@@ -34,7 +38,7 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from openmetadata_client import (
+    from .openmetadata_client import (
         configurado as om_configurado,
         listar_dominios,
         aplicar_dominios,
@@ -132,7 +136,7 @@ def main() -> None:
             "3) Buscar tabelas e gerar previsões — coluna «Enviar» vem todas como Sim; clique na célula para alternar Sim/Não; "
             "4) Aplicar domínios envia só as linhas com Enviar=Sim. "
             "«Listar domínios» substitui a tabela (para aplicar domínios, busque previsões de novo). "
-            "O modelo deve existir (treine com gui_app.py na aba Treino ou copie o .pkl esperado)."
+            "O modelo deve existir (treine com: python -m classificador_dominio.gui_app — aba Treino — ou copie o .pkl)."
         ),
         wraplength=720,
     ).pack(anchor=tk.W, pady=(0, 4))
@@ -301,7 +305,7 @@ def main() -> None:
             messagebox.showwarning(
                 "Aviso",
                 f"Modelo não encontrado em:\n{MODELO_PADRAO}\n\n"
-                "Treine com gui_app.py (aba Treino) ou copie o arquivo do modelo para esse caminho.",
+                "Treine com: python -m classificador_dominio.gui_app (aba Treino) ou copie o .pkl para a raiz do projeto.",
             )
             return
         threading.Thread(target=om_buscar_tabelas_e_prever_worker, args=(fqn_db,), daemon=True).start()
