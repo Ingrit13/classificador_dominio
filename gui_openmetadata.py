@@ -89,7 +89,7 @@ def _preencher_previsoes(tree: ttk.Treeview, df: pd.DataFrame) -> None:
     _tree_configure(
         tree,
         ("nome", "dominio", "confianca"),
-        ("Nome", "Domínio", "Confiança"),
+        ("Nome", "Domínio", "Confiança (%)"),
         (260, 160, 100),
     )
     for _, row in df.iterrows():
@@ -99,7 +99,10 @@ def _preencher_previsoes(tree: ttk.Treeview, df: pd.DataFrame) -> None:
         if conf is None or (isinstance(conf, float) and pd.isna(conf)):
             conf_txt = ""
         else:
-            conf_txt = f"{float(conf):.4f}"
+            c = float(conf)
+            # sklearn: probabilidade em [0, 1]; se vier já em escala 0–100, não multiplicar de novo
+            pct = c * 100 if c <= 1.0 else c
+            conf_txt = f"{pct:.2f}%"
         tree.insert("", tk.END, values=(nome, dom, conf_txt))
 
 
