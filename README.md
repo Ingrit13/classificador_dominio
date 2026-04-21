@@ -10,7 +10,6 @@ Código da aplicação em **`src/classificador_dominio/`** (layout *src* recomen
 |---------|----------|
 | `src/classificador_dominio/` | Pacote importável: `pipeline_core`, `openmetadata_client`, `api`, GUIs |
 | `data/` | CSVs de exemplo (`dataset_V9.csv`, etc.) |
-| `scripts/` | Scripts executados por caminho (`run_pipeline.py`) |
 | `tests/` | Testes (`pytest`) |
 
 Na **raiz** ficam `pyproject.toml`, `README.md`, `.env.example`, artefatos gerados (`modelo_svm_treinado.pkl`, `matriz_confusao.png`, `resultados_api/`, …).
@@ -60,22 +59,14 @@ uvicorn classificador_dominio.api:app --reload --host 0.0.0.0 --port 8000
 
 Documentação: http://localhost:8000/docs
 
-### 4. Pipeline em linha de comando (script)
-
-```bash
-py scripts/run_pipeline.py
-```
-
-Usa `data/dataset_V9.csv` e grava artefatos na **raiz** do repositório (`modelo_svm_treinado.pkl`, `matriz_confusao.png`, etc.).
-
-### 5. Testes
+### 4. Testes
 
 ```bash
 pip install -e ".[dev]"
 pytest
 ```
 
-### 6. Executável (Windows, PyInstaller)
+### 5. Executável (Windows, PyInstaller)
 
 Após `pip install -e .`, crie um script de entrada na raiz (por exemplo `launcher_gui.py`) com `from classificador_dominio.gui_app import main` e `main()`, e rode o PyInstaller sobre esse arquivo, usando `--collect-submodules classificador_dominio` se necessário. O `.exe` deve ser distribuído junto com `.env` (ou variáveis de ambiente) e `modelo_svm_treinado.pkl` na pasta de trabalho desejada.
 
