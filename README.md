@@ -69,7 +69,7 @@ export OPENMETADATA_TOKEN="seu_token_jwt_aqui"
 ```
 
 - **API**: `GET /openmetadata/domains` lista domínios; `POST /openmetadata/aplicar-dominios` envia CSV (colunas `table_fqn`, `predicted_domain`) ou JSON `{"itens": [...]}` para aplicar domínios às tabelas.
-- **GUI**: aba "OpenMetadata" — use **Carregar lista do catálogo** (ao lado do rótulo «Base (database):») para listar databases no combobox; escolha uma base; **Buscar tabelas e gerar previsões** obtém as tabelas via API, roda o modelo e guarda o resultado em memória; **Aplicar domínios no OpenMetadata** grava os domínios preditos nas tabelas (FQN vindo do OpenMetadata). **Listar domínios** só imprime domínios no log. Ainda é possível usar a aba **Previsão** com CSV local; nesse caso o `table_fqn` é `schema.nome_tabela` (pode diferir do FQN do catálogo).
+- **GUI OpenMetadata** (fluxo catálogo + previsão + aplicar domínios): `py gui_openmetadata.py` — **Carregar lista do catálogo**, escolher base, **Buscar tabelas e gerar previsões**, **Aplicar domínios no OpenMetadata**. O `gui_app.py` mantém só abas Baixar Dados, Treino e Previsão; na **Previsão** com CSV local o `table_fqn` é `schema.nome_tabela` (pode diferir do FQN do catálogo).
 
 Há um `.env.example` no projeto; copie para `.env` e preencha (se usar biblioteca que carrega `.env`).
 
