@@ -4,12 +4,15 @@ Requer o mesmo modelo treinado que a GUI completa (MODELO_PADRAO em pipeline_cor
 
 Uso: py gui_openmetadata.py
 """
+from __future__ import annotations
+
 import os
 import sys
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 from pathlib import Path
+from typing import Any, Dict, List, Sequence
 
 _script_dir = Path(__file__).resolve().parent
 os.chdir(_script_dir)
@@ -22,6 +25,7 @@ except ImportError:
     pass
 
 try:
+    import pandas as pd
     from pipeline_core import prever_dataframe, MODELO_PADRAO
 except ImportError:
     root = tk.Tk()
@@ -45,11 +49,65 @@ except ImportError:
     sys.exit(1)
 
 
+def _tree_clear(tree: ttk.Treeview) -> None:
+    tree.delete(*tree.get_children())
+
+
+def _tree_configure(
+    tree: ttk.Treeview,
+    columns: Sequence[str],
+    headings: Sequence[str],
+    widths: Sequence[int],
+) -> None:
+    tree["show"] = "headings"
+    tree["columns"] = tuple(columns)
+    for col, head, w in zip(columns, headings, widths):
+        tree.heading(col, text=head)
+        tree.column(col, width=w, minwidth=48, stretch=True)
+
+
+def _preencher_dominios(tree: ttk.Treeview, dominios: List[Dict[str, Any]]) -> None:
+    _tree_clear(tree)
+    _tree_configure(tree, ("nome", "id"), ("Nome", "ID"), (220, 320))
+    for d in dominios:
+        nome = str(d.get("name") or "")
+        did = str(d.get("id") or "")
+        tree.insert("", tk.END, values=(nome, did))
+
+
+def _nome_linha_previsao(row: pd.Series) -> str:
+    if "nome_tabela" in row.index and pd.notna(row.get("nome_tabela")):
+        return str(row["nome_tabela"])
+    fqn = str(row.get("table_fqn") or "")
+    if fqn and "." in fqn:
+        return fqn.rsplit(".", 1)[-1]
+    return fqn
+
+
+def _preencher_previsoes(tree: ttk.Treeview, df: pd.DataFrame) -> None:
+    _tree_clear(tree)
+    _tree_configure(
+        tree,
+        ("nome", "dominio", "confianca"),
+        ("Nome", "Domínio", "Confiança"),
+        (260, 160, 100),
+    )
+    for _, row in df.iterrows():
+        nome = _nome_linha_previsao(row)
+        dom = str(row.get("predicted_domain", "") or "")
+        conf = row.get("confidence")
+        if conf is None or (isinstance(conf, float) and pd.isna(conf)):
+            conf_txt = ""
+        else:
+            conf_txt = f"{float(conf):.4f}"
+        tree.insert("", tk.END, values=(nome, dom, conf_txt))
+
+
 def main() -> None:
     root = tk.Tk()
     root.title("OpenMetadata — Classificador de domínios")
-    root.geometry("720x560")
-    root.minsize(520, 420)
+    root.geometry("780x620")
+    root.minsize(560, 480)
 
     frame = ttk.Frame(root, padding=10)
     frame.pack(fill=tk.BOTH, expand=True)
@@ -63,16 +121,22 @@ def main() -> None:
     ttk.Label(
         frame,
         text=(
-            "Fluxo: 1) Carregar lista do catálogo (databases) no combobox; "
-            "2) escolher uma base; 3) Buscar tabelas e gerar previsões; "
+            "Fluxo: 1) Carregar lista do catálogo; 2) escolher uma base; "
+            "3) Buscar tabelas e gerar previsões (tabela abaixo); "
             "4) Aplicar domínios no OpenMetadata. "
-            "«Listar domínios» só mostra domínios no log. "
+            "«Listar domínios» preenche a tabela com Nome e ID. "
             "O modelo deve existir (treine com gui_app.py na aba Treino ou copie o .pkl esperado)."
         ),
-        wraplength=660,
-    ).pack(anchor=tk.W, pady=(0, 6))
+        wraplength=720,
+    ).pack(anchor=tk.W, pady=(0, 4))
+
+    lbl_status = ttk.Label(frame, text="", font=("", 9))
+    lbl_status.pack(anchor=tk.W, pady=(0, 4))
 
     om_state: dict = {"bases": [], "df_pred": None}
+
+    def _set_status(msg: str) -> None:
+        lbl_status.config(text=msg)
 
     def _om_label_base(b: dict) -> str:
         svc = b.get("service_pai") or "—"
@@ -86,10 +150,36 @@ def main() -> None:
     cb_base_fqn = ttk.Combobox(row_om1, width=48, state="readonly")
     cb_base_fqn.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+    row_om2 = ttk.Frame(frame)
+    row_om2.pack(fill=tk.X, pady=4)
+    lbl_om_pred = ttk.Label(row_om2, text="Nenhuma previsão em memória.")
+    lbl_om_pred.pack(side=tk.LEFT)
+    btn_om_buscar = ttk.Button(row_om2, text="Buscar tabelas e gerar previsões")
+    btn_om_buscar.pack(side=tk.RIGHT)
+
+    lf_result = ttk.LabelFrame(frame, text="Resultados", padding=6)
+    lf_result.pack(fill=tk.BOTH, expand=True, pady=(4, 6))
+
+    tree_frm = ttk.Frame(lf_result)
+    tree_frm.pack(fill=tk.BOTH, expand=True)
+    tree_results = ttk.Treeview(tree_frm, height=14)
+    scroll_y = ttk.Scrollbar(tree_frm, orient=tk.VERTICAL, command=tree_results.yview)
+    scroll_x = ttk.Scrollbar(tree_frm, orient=tk.HORIZONTAL, command=tree_results.xview)
+    tree_results.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+    tree_results.grid(row=0, column=0, sticky="nsew")
+    scroll_y.grid(row=0, column=1, sticky="ns")
+    scroll_x.grid(row=1, column=0, sticky="ew")
+    tree_frm.rowconfigure(0, weight=1)
+    tree_frm.columnconfigure(0, weight=1)
+
+    ttk.Label(frame, text="Log (aplicar domínios e avisos):", font=("", 9)).pack(anchor=tk.W)
+    log_om = scrolledtext.ScrolledText(frame, height=7, wrap=tk.WORD, font=("Consolas", 9))
+    log_om.pack(fill=tk.BOTH, expand=False, pady=(0, 6))
+
     def om_carregar_bases() -> None:
-        log_om.delete("1.0", tk.END)
+        _set_status("")
         if not om_configurado():
-            log_om.insert(tk.END, "Defina OPENMETADATA_URL e OPENMETADATA_TOKEN nas variáveis de ambiente.\n")
+            _set_status("Defina OPENMETADATA_URL e OPENMETADATA_TOKEN.")
             messagebox.showwarning("OpenMetadata", "Variáveis de ambiente não configuradas.")
             return
         try:
@@ -103,22 +193,16 @@ def main() -> None:
                 cb_base_fqn.set(labels[0])
             cb_base_fqn.configure(state="readonly")
             cb_base_fqn.update_idletasks()
-            log_om.insert(tk.END, f"Carregadas {len(bases)} base(s) (databases).\n")
+            _set_status(f"Carregadas {len(bases)} base(s) (databases).")
             if not bases:
-                log_om.insert(
-                    tk.END,
-                    "Nenhuma database encontrada. Verifique ingestão no OpenMetadata e permissões do token.\n",
+                _set_status(
+                    "Nenhuma database encontrada. Verifique ingestão no OpenMetadata e permissões do token."
                 )
         except Exception as e:
-            log_om.insert(tk.END, f"Erro ao listar bases: {e}\n")
+            _set_status(f"Erro ao listar bases: {e}")
             messagebox.showerror("OpenMetadata", str(e))
 
     btn_om_carregar_bases.config(command=om_carregar_bases)
-
-    row_om2 = ttk.Frame(frame)
-    row_om2.pack(fill=tk.X, pady=4)
-    lbl_om_pred = ttk.Label(row_om2, text="Nenhuma previsão em memória.")
-    lbl_om_pred.pack(side=tk.LEFT)
 
     def _om_fqn_base_selecionada() -> str:
         texto = (cb_base_fqn.get() or "").strip()
@@ -132,76 +216,81 @@ def main() -> None:
             return om_state["bases"][idx].get("fullyQualifiedName") or ""
         return ""
 
-    btn_om_buscar = ttk.Button(row_om2, text="Buscar tabelas e gerar previsões")
+    def om_buscar_tabelas_e_prever_worker(fqn_db: str) -> None:
+        def on_ok(df_pred: pd.DataFrame, n: int) -> None:
+            om_state["df_pred"] = df_pred
+            _preencher_previsoes(tree_results, df_pred)
+            lf_result.config(text="Tabelas e previsões")
+            lbl_om_pred.config(text=f"Previsões em memória: {n} tabela(s).")
+            _set_status(f"{n} tabela(s) com previsão. Use «Aplicar domínios» para gravar no catálogo.")
 
-    def om_buscar_tabelas_e_prever_worker() -> None:
+        def on_empty(msg: str) -> None:
+            om_state["df_pred"] = None
+            _tree_clear(tree_results)
+            lbl_om_pred.config(text="Nenhuma previsão em memória.")
+            _set_status(msg)
+
+        def on_err(e: BaseException) -> None:
+            om_state["df_pred"] = None
+            _tree_clear(tree_results)
+            lbl_om_pred.config(text="Nenhuma previsão em memória.")
+            _set_status(f"Erro: {e}")
+            messagebox.showerror("Erro", str(e))
+
         try:
-            btn_om_buscar.config(state="disabled")
-            log_om.delete("1.0", tk.END)
-            if not om_configurado():
-                log_om.insert(tk.END, "Defina OPENMETADATA_URL e OPENMETADATA_TOKEN.\n")
-                return
-            fqn_db = _om_fqn_base_selecionada()
-            if not fqn_db:
-                messagebox.showwarning(
-                    "Aviso",
-                    "Use «Carregar lista do catálogo» acima e selecione uma base no combobox.",
-                )
-                return
-            if not Path(MODELO_PADRAO).exists():
-                messagebox.showwarning(
-                    "Aviso",
-                    f"Modelo não encontrado em:\n{MODELO_PADRAO}\n\n"
-                    "Treine com gui_app.py (aba Treino) ou copie o arquivo do modelo para esse caminho.",
-                )
-                return
-            log_om.insert(tk.END, f"Buscando tabelas da base: {fqn_db}\n")
-            log_om.update()
+            root.after(0, lambda: btn_om_buscar.config(state="disabled"))
+            root.after(0, lambda db=fqn_db: _set_status(f"Buscando tabelas da base: {db}…"))
             tabelas = listar_tabelas_por_database(fqn_db)
             if not tabelas:
-                log_om.insert(tk.END, "Nenhuma tabela retornada pela API para esta base.\n")
-                om_state["df_pred"] = None
-                lbl_om_pred.config(text="Nenhuma previsão em memória.")
+                root.after(0, lambda: on_empty("Nenhuma tabela retornada pela API para esta base."))
                 return
             df_in = tabelas_openmetadata_para_dataframe(tabelas)
-            log_om.insert(tk.END, f"Tabelas obtidas: {len(df_in)}. Gerando previsões…\n")
-            log_om.update()
+            root.after(0, lambda n=len(df_in): _set_status(f"Gerando previsões para {n} tabela(s)…"))
             df_pred = prever_dataframe(df_in, modelo_path=MODELO_PADRAO, salvar_resultado_em=None)
-            om_state["df_pred"] = df_pred
-            lbl_om_pred.config(text=f"Previsões em memória: {len(df_pred)} tabela(s).")
-            log_om.insert(tk.END, df_pred[["table_fqn", "predicted_domain", "confidence"]].head(15).to_string())
-            if len(df_pred) > 15:
-                log_om.insert(tk.END, f"\n… e mais {len(df_pred) - 15} linha(s).\n")
-            log_om.insert(tk.END, "\nUse 'Aplicar domínios' para gravar no catálogo.\n")
+            n = len(df_pred)
+            root.after(0, lambda d=df_pred, c=n: on_ok(d, c))
         except Exception as e:
-            om_state["df_pred"] = None
-            lbl_om_pred.config(text="Nenhuma previsão em memória.")
-            log_om.insert(tk.END, f"Erro: {e}\n")
-            messagebox.showerror("Erro", str(e))
+            root.after(0, lambda err=e: on_err(err))
         finally:
-            btn_om_buscar.config(state="normal")
+            root.after(0, lambda: btn_om_buscar.config(state="normal"))
 
     def om_buscar_tabelas_e_prever() -> None:
-        threading.Thread(target=om_buscar_tabelas_e_prever_worker, daemon=True).start()
+        if not om_configurado():
+            _set_status("Defina OPENMETADATA_URL e OPENMETADATA_TOKEN.")
+            messagebox.showwarning("OpenMetadata", "Variáveis de ambiente não configuradas.")
+            return
+        fqn_db = _om_fqn_base_selecionada()
+        if not fqn_db:
+            messagebox.showwarning(
+                "Aviso",
+                "Use «Carregar lista do catálogo» acima e selecione uma base no combobox.",
+            )
+            return
+        if not Path(MODELO_PADRAO).exists():
+            messagebox.showwarning(
+                "Aviso",
+                f"Modelo não encontrado em:\n{MODELO_PADRAO}\n\n"
+                "Treine com gui_app.py (aba Treino) ou copie o arquivo do modelo para esse caminho.",
+            )
+            return
+        threading.Thread(target=om_buscar_tabelas_e_prever_worker, args=(fqn_db,), daemon=True).start()
 
     btn_om_buscar.config(command=om_buscar_tabelas_e_prever)
-    btn_om_buscar.pack(side=tk.RIGHT)
-
-    log_om = scrolledtext.ScrolledText(frame, height=14, wrap=tk.WORD, font=("Consolas", 9))
-    log_om.pack(fill=tk.BOTH, expand=True, pady=8)
 
     def om_listar() -> None:
-        log_om.delete("1.0", tk.END)
         if not om_configurado():
-            log_om.insert(tk.END, "Defina OPENMETADATA_URL e OPENMETADATA_TOKEN nas variáveis de ambiente.\n")
+            _set_status("Defina OPENMETADATA_URL e OPENMETADATA_TOKEN.")
+            messagebox.showwarning("OpenMetadata", "Variáveis de ambiente não configuradas.")
             return
         try:
             doms = listar_dominios()
-            log_om.insert(tk.END, f"Domínios ({len(doms)}):\n")
-            for d in doms:
-                log_om.insert(tk.END, f"  - {d.get('name')} (id={d.get('id')})\n")
+            _preencher_dominios(tree_results, doms)
+            lf_result.config(text="Domínios")
+            _set_status(f"{len(doms)} domínio(s) listados.")
         except Exception as e:
-            log_om.insert(tk.END, f"Erro: {e}\n")
+            _tree_clear(tree_results)
+            _set_status(f"Erro: {e}")
+            messagebox.showerror("Erro", str(e))
 
     def om_aplicar() -> None:
         log_om.delete("1.0", tk.END)
