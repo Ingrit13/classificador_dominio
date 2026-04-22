@@ -63,6 +63,12 @@ def _preparar_texto(row) -> str:
     return f"{schema}, {nome_tabela}, {qtd}, {nome_colunas}"
 
 
+def _normalizar_nomes_colunas(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [str(c).strip().lstrip("\ufeff") for c in df.columns]
+    return df
+
+
 def carregar_e_preparar_csv(
     csv_path: str,
     exige_rotulo: bool = True,
@@ -75,6 +81,7 @@ def carregar_e_preparar_csv(
         df = pd.read_csv(csv_path, sep=None, engine="python")
     except Exception:
         df = pd.read_csv(csv_path, sep=";", engine="python")
+    df = _normalizar_nomes_colunas(df)
 
     colunas_obrigatorias = TEXT_COLS + ([ROTULO] if exige_rotulo else [])
     missing = [c for c in colunas_obrigatorias if c not in df.columns]
@@ -102,6 +109,7 @@ def preparar_dataframe_previsao(df: pd.DataFrame) -> pd.DataFrame:
     Valida e prepara um DataFrame em memória (mesmas colunas que o CSV de previsão).
     Colunas: schema, nome_tabela, qtd_colunas, nome_colunas (opcional: table_fqn do OpenMetadata).
     """
+    df = _normalizar_nomes_colunas(df)
     missing = [c for c in TEXT_COLS if c not in df.columns]
     if missing:
         raise ValueError(f"Colunas obrigatórias ausentes: {missing}")

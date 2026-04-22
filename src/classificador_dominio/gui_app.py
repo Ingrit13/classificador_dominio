@@ -16,6 +16,13 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 from pathlib import Path
 from typing import Any, Dict
 
+if __name__ == "__main__" and __package__ in (None, ""):
+    # Allow running this file directly: python src/classificador_dominio/gui_app.py
+    _SRC_DIR = Path(__file__).resolve().parents[1]
+    if str(_SRC_DIR) not in sys.path:
+        sys.path.insert(0, str(_SRC_DIR))
+    __package__ = "classificador_dominio"
+
 from .paths import repo_root
 
 _REPO = repo_root()
@@ -256,7 +263,7 @@ def baixar_dados_worker(
         log_widget.insert(tk.END, tr("log_total_obtained", n=len(rows)))
         log_widget.update()
         df = pd.DataFrame(rows)
-        df.to_csv(saida_path, index=False, encoding="utf-8-sig")
+        df.to_csv(saida_path, index=False, encoding="utf-8-sig", lineterminator="\n")
         log_widget.insert(tk.END, tr("log_exported_n", n=len(df), path=saida_path))
         messagebox.showinfo(
             tr("msg_success_export_title"),
